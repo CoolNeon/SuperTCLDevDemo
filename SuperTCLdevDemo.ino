@@ -1,6 +1,6 @@
 /*****************************************************************************
  * SuperTCLdevDemo.ino
- * Version 1.1.4
+ * Version 1.2
  *
  * Notes:  Needs better comments and docs!
  *
@@ -10,19 +10,28 @@
  *
  * This example will send a flickering fire sequence down a strand of 25 TCL pixels.
  * Several of the attributes are dunamically adjustable:
-
- * New in 1.1.x 
- * User can dymacially adjust the length of the active pixels in the strand by holding 
- * down Momentary 1 (Pin 4) and turning the lower right Analog Potentiometer (Pin 0)
  * 
+ * New in 1.2
+ * Feature: When you use TCL_MOMENTARY2 to adjust ACTIVELEDS (length of the strand), 
+ *          that value is stored in EEPROM so that it persists through power cycles.
+ *          No more having to tweak the strand length every time you set up!
+ * Fix:     All functions now utilize ACTIVELEDS, where some had been sloppy and 
+ *          ran out to MAXLEDS.
+ * FIX:     RainBling now uses the same strand[MAXLEDS][3] data structure as all other
+ *          functions, reducing the memory requirements for the sketch.
+ * 
+ * New in 1.1.4 
+ * fix:  Forgot to remove developer flag used in testing 1.1.3
+ *
  * New in 1.1.3 
  * Fix:  If Dev/Simple shield detect falsely identifies Simple, it can be reset by changing any of the switches or buttons.
  * Fix:  Resolved issue where strands larger than 25 didn't clear pixels after 25 when the length had not been manually adjusted.
  *
- * New in 1.1.4 
- * fix:  Forgot to remove developer flag used in testing 1.1.3
- *
+ * New in 1.1.x 
+ * User can dymacially adjust the length of the active pixels in the strand by holding 
+ * down Momentary 1 (Pin 4) and turning the lower right Analog Potentiometer (Pin 0)
  * Fire mode adjustments:
+ * 
  *
  *  Intensity  Warmth 
  *   * -        - *
@@ -44,12 +53,22 @@
  ****************************************************************************/
 #include <SPI.h>
 #include <TCL.h>
+#include <EEPROM.h>
 
-const int MAXLEDS = 100;
-int ACTIVELEDS = 100;  // User can dymamically adjust this after program starts running
+
+const int MAXLEDS = 400; // Maximum number of LEDs that this demo will address
+int ACTIVELEDS = 200;  // User can dymamically adjust this after program starts running
+
 byte red_values[MAXLEDS];
 byte green_values[MAXLEDS];
 byte blue_values[MAXLEDS];
+byte strand[MAXLEDS][3]; // 0=R, 1=G, 2=B
+
+// This structure is used to read and write values from EEPROM
+struct SettingsObject {
+  int NumberOfLEDs;
+  int checksum;
+};
 
 // Absolute colors for the pixels
 byte RED = 0;
@@ -73,17 +92,12 @@ int TCL_SWITCH1_Initial_State;
 int TCL_SWITCH2_Initial_State;
 
 //  BEGIN - Variables and constants for rainbling subroutine
-const int rain_REPEATS = 12;
-const int rain_TOTEMS = 25;
-const int rain_LEDS_PER_TOTEM = 1;
 byte rain_gamma_table[256];
 const float rain_gamma = 2.2;
 const float rain_hinterval_max = 10.0;
 const float rain_v_max = 0.99;
 const float rain_sat_max = 1.0;
 const int rain_flash_prob_max=20480;
-
-byte rain_totem_color[rain_TOTEMS][3];
 float rain_totem_interval;
 float rain_hval;
 //  END - Variables and constants for rainbling subroutine
@@ -96,6 +110,8 @@ int DevSheildInstalled = 0;
 void setup() {
   TCL.begin();
   TCL.setupDeveloperShield();
+
+  ACTIVELEDS = readSettingsFromEEPROM(ACTIVELEDS);
   
   MOMENTARY1_Initial_State = digitalRead(TCL_MOMENTARY1);
   MOMENTARY2_Initial_State = digitalRead(TCL_MOMENTARY2);
@@ -106,7 +122,11 @@ void setup() {
 //  whiteout_strand();
 //  delay(1000);
 //  blackout_strand();
-  
+
+  for(int i=0;i<256;i++) {
+    rain_gamma_table[i] = (byte)(pow(i/255.0,rain_gamma)*255.0+0.5);
+  }
+
 }
 
 void loop() {
@@ -140,7 +160,7 @@ void FireStrand() {
   
   intensity=(float)map(analogRead(TCL_POT4), 0, 1023, 0, 100)/100;
   chromatography=(float)map(analogRead(TCL_POT3), 0, 1023, 0, 50)/100;
-  strandlength=(int)map(analogRead(TCL_POT2), 0, 1023, 1, MAXLEDS);
+  strandlength=ACTIVELEDS;
   delaytime=(int)map(analogRead(TCL_POT1), 0, 1023, 150, 0);
   
   TCL.sendEmptyFrame();
@@ -204,6 +224,8 @@ void CheckSwitches() {
     }
     TCL.sendEmptyFrame();
   }
+  writeSettingsToEEPROM(ACTIVELEDS);
+
 
   if ( 1 == DevSheildInstalled ) {
     if (digitalRead(TCL_SWITCH1) == 0 && digitalRead(TCL_SWITCH2) == 0){
@@ -231,9 +253,9 @@ void reset_strand() {
   int i;
   
   for(i=0;i<MAXLEDS;i++) {
-    red_values[i]=0;
-    green_values[i]=0;
-    blue_values[i]=0;
+    strand[i][0]=0;  // R
+    strand[i][1]=0;  // G
+    strand[i][2]=0;  // B
   }
   update_strand();
 }
@@ -244,7 +266,7 @@ void update_strand() {
   
   TCL.sendEmptyFrame();
   for(i=0;i<ACTIVELEDS;i++) {
-    sendPixelData(red_values[i],green_values[i],blue_values[i]);
+    sendPixelData(strand[i][0],strand[i][1],strand[i][2]);
   }
   while (i < MAXLEDS) {
       TCL.sendColor(0,0,0);
@@ -252,24 +274,6 @@ void update_strand() {
     }
   TCL.sendEmptyFrame();
 }
-
-void rain_update_strand() {
-  int i;
-  int j;
-  int k;
-  
-  TCL.sendEmptyFrame();
-  for(k=0;k<rain_REPEATS;k++) {
-    for(i=0;i<rain_TOTEMS;i++) {
-      for(j=0;j<rain_LEDS_PER_TOTEM;j++) {
-        sendPixelData(rain_gamma_table[rain_totem_color[i][0]],rain_gamma_table[rain_totem_color[i][1]],rain_gamma_table[rain_totem_color[i][2]]);
-      }
-    }
-  }
-  TCL.sendEmptyFrame();
-  TCL.sendEmptyFrame();
-}
-
 
 void cylon_eye() {
   int i;
@@ -281,23 +285,23 @@ void cylon_eye() {
     // Forward color sweep
     for(i=0; i<ACTIVELEDS;i++){
       check_color_pots();
-      red_values[i]=RED;
-      blue_values[i]=BLUE;
-      green_values[i]=GREEN;
+      strand[i][0]=RED;
+      strand[i][1]=GREEN;
+      strand[i][2]=BLUE;
       for(j=1;j<=10;j++) {
         pos=i-j;
         if(pos>=0) {
-          red_values[pos] = red_values[pos] / 2;
-          green_values[pos] = green_values[pos] / 2;
-          blue_values[pos] = blue_values[pos] / 2;
+          strand[pos][0] = strand[pos][0] / 2;
+          strand[pos][1] = strand[pos][1] / 2;
+          strand[pos][2] = strand[pos][2] / 2;
         }
       } 
 
       // Empty out all trailing LEDs.  This prevents 'orphans' when dynamically shortening the tail length.
       for(pos=i-j; pos>=0;pos--){
-        red_values[pos]=0;
-        green_values[pos]=0;
-        blue_values[pos]=0;
+        strand[pos][0]=0;
+        strand[pos][1]=0;
+        strand[pos][2]=0;
       }
 
       update_strand(); // Send all the pixels out
@@ -317,23 +321,23 @@ void cylon_eye() {
     // Reverse color sweep
     for(i=ACTIVELEDS-1; i>=0;i--){
       check_color_pots();
-      red_values[i]=RED;
-      blue_values[i]=BLUE;
-      green_values[i]=GREEN;
+      strand[i][0]=RED;
+      strand[i][1]=GREEN;
+      strand[i][2]=BLUE;
       for(j=1;j<=10;j++) {
         pos=i+j;
         if(pos<ACTIVELEDS) {
-          red_values[pos] = red_values[pos] / 2;
-          green_values[pos] = green_values[pos] / 2;
-          blue_values[pos] = blue_values[pos] / 2;
+          strand[pos][0] = strand[pos][0] / 2;
+          strand[pos][1] = strand[pos][1] / 2;
+          strand[pos][2] = strand[pos][2] / 2;
         }
       }
 
     // Empty out all trailing LEDs.  This prevents 'orphans' when dynamically shortening the tail length.
       for(pos=i+j; pos<ACTIVELEDS;pos++){
-        red_values[pos]=0;
-        green_values[pos]=0;
-        blue_values[pos]=0;
+        strand[pos][0]=0;
+        strand[pos][1]=0;
+        strand[pos][2]=0;
       }
 
       update_strand(); // Send all the pixels out
@@ -379,20 +383,20 @@ void color_picker() {
 
   /* Move colors down the line by one */
   for(i=ACTIVELEDS-1;i>0;i--) {
-    red_values[i]=red_values[i-1];
-    green_values[i]=green_values[i-1];
-    blue_values[i]=blue_values[i-1];
+    strand[i][0]=strand[i-1][0];
+    strand[i][1]=strand[i-1][1];
+    strand[i][2]=strand[i-1][2];
   }
   /* Read the current red value from potentiometer 1
    * Values are 10 bit and must be left shifted by 2 in order to fit in 8
    * bits */
-  red_values[0]=analogRead(TCL_POT1)>>2;
+  strand[0][0]=analogRead(TCL_POT1)>>2;
   
   /* Read the current green value from potentiometer 2 */
-  green_values[0]=analogRead(TCL_POT2)>>2;
+  strand[0][1]=analogRead(TCL_POT2)>>2;
 
   /* Read the current blue value from potentiometer 3 */
-  blue_values[0]=analogRead(TCL_POT3)>>2;
+  strand[0][2]=analogRead(TCL_POT3)>>2;
 
   update_strand(); // Send all the pixels out
   delay( (int)map(analogRead(TCL_POT4), 0, 1023, 150, 0) );
@@ -453,29 +457,17 @@ void rain_HSVtoRGB(float h, float s, float v, byte *r, byte *g, byte *b) {
     }
   }
   
-  *r = (byte)floor(r_f*255.99);
-  *g = (byte)floor(g_f*255.99);
-  *b = (byte)floor(b_f*255.99);
+  *r = rain_gamma_table[(byte)floor(r_f*255.99)];
+  *g = rain_gamma_table[(byte)floor(g_f*255.99)];
+  *b = rain_gamma_table[(byte)floor(b_f*255.99)];
 }
 
 void rainBling() {
 
   // BEGIN rainbling setup
-  int i;
-  
-  rain_totem_interval = 360.0/rain_TOTEMS;
+  rain_totem_interval = 360.0/ACTIVELEDS;
   rain_hval = 0.0;
-  
-  for(i=0;i<rain_TOTEMS;i++) {
-    rain_totem_color[i][0]=0x00;
-    rain_totem_color[i][1]=0x00;
-    rain_totem_color[i][2]=0x00;
-  }
-  rain_update_strand();
-  
-  for(i=0;i<256;i++) {
-    rain_gamma_table[i] = (byte)(pow(i/255.0,rain_gamma)*255.0+0.5);
-  }
+  blackout_strand();
   // END rainbling setup
   
   while ( SWITCHSTATE == 0 ) {
@@ -506,23 +498,23 @@ void rainBling() {
     v = rain_v_max/1023.0*brightness_pot;
     sat = rain_sat_max/1023.0*saturation_pot;
   
-    for(i=0;i<rain_TOTEMS;i++) {
+    for(i=0;i<ACTIVELEDS;i++) {
       local_h = rain_hval+i*rain_totem_interval;
       while(local_h>=360.0) {
         local_h-=360.0;
       }
       if(random(rain_flash_prob_max)<flash_pot) {
-        rain_totem_color[i][0]=255;
-        rain_totem_color[i][1]=255;
-        rain_totem_color[i][2]=255;
+        strand[i][0]=255;
+        strand[i][1]=255;
+        strand[i][2]=255;
       }
       else {
-        rain_HSVtoRGB(local_h,sat,v,&rain_totem_color[i][0],&rain_totem_color[i][1],&rain_totem_color[i][2]);
+        rain_HSVtoRGB(local_h,sat,v,&strand[i][0],&strand[i][1],&strand[i][2]);
       }
       CheckSwitches();
     }
   
-    rain_update_strand();
+    update_strand();
     delay(25);
     hinterval = rain_hinterval_max/1023.0*speed_pot;
     rain_hval+=hinterval;
@@ -556,28 +548,43 @@ void DevBoardDetect() {
 }
 
 void blackout_strand() {
-  int i;
-  
-  TCL.sendEmptyFrame();
-  for(i=0;i<MAXLEDS;i++) {
-    red_values[i]=0;
-    green_values[i]=0;
-    blue_values[i]=0;
-    TCL.sendColor(red_values[i],green_values[i],blue_values[i]);
+  for(int i=0;i<MAXLEDS;i++) {
+    strand[i][0]=0;
+    strand[i][1]=0;
+    strand[i][2]=0;
   }
-  TCL.sendEmptyFrame();
+  update_strand();
 }
 
 void whiteout_strand() {
-  int i;
-  
-  TCL.sendEmptyFrame();
-  for(i=0;i<MAXLEDS;i++) {
-    red_values[i]=255;
-    green_values[i]=255;
-    blue_values[i]=255;
-    TCL.sendColor(red_values[i],green_values[i],blue_values[i]);
+  for(int i=0;i<MAXLEDS;i++) {
+    strand[i][0]=255;
+    strand[i][1]=255;
+    strand[i][2]=255;
   }
-  TCL.sendEmptyFrame();
+  update_strand();
 }
 
+
+
+int readSettingsFromEEPROM(int defaultLEDs) {
+
+  SettingsObject tempVar; //Variable to store custom object read from EEPROM.
+  EEPROM.get(0, tempVar);
+
+  if ( ((tempVar.NumberOfLEDs + 69) * 42) == tempVar.checksum) {
+    return(tempVar.NumberOfLEDs);
+  }
+  else {
+    return(defaultLEDs);
+  }
+}
+
+void writeSettingsToEEPROM(int currentLEDs) {
+  //Data to store.
+  SettingsObject tempVar = {
+    currentLEDs,
+    (( currentLEDs + 69) * 42)
+  };
+  EEPROM.put(0, tempVar);
+}
