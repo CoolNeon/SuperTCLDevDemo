@@ -1,16 +1,14 @@
 /*****************************************************************************
  * SuperTCLdevDemo.ino
- * Version 1.2
+ * Version 1.2.1
  *
  * Notes:  Needs better comments and docs!
  *
- * Code now detects for type of momentary switch, as well as whether a TCL Developer
- * or Simple Board is installed.  If a TCL SImple Board is installed, it defaults to
- * running rainbling() with a set of cisually appealing presets.
+ * Code now detects for type of momentary switch, to compensate for a manufacturing 
+ * issue with the TCL Dev Shields, as well as whether a TCL Developer or Simple Board 
+ * is installed.  If a TCL SImple Board is installed, it defaults to running 
+ * rainbling() with a set of visually appealing presets.
  *
- * This example will send a flickering fire sequence down a strand of 25 TCL pixels.
- * Several of the attributes are dunamically adjustable:
- * 
  * New in 1.2
  * Feature: When you use TCL_MOMENTARY2 to adjust ACTIVELEDS (length of the strand), 
  *          that value is stored in EEPROM so that it persists through power cycles.
@@ -30,9 +28,16 @@
  * New in 1.1.x 
  * User can dymacially adjust the length of the active pixels in the strand by holding 
  * down Momentary 1 (Pin 4) and turning the lower right Analog Potentiometer (Pin 0)
+ * 
+ * cylon_eye() looks like a certain retro science fiction special effect.
+ * 
+ * rainBling() is a HSV rainbow, with bonus lightning effects.
+ * 
+ * FireStrand() will send a flickering fire sequence down the strand of TCL pixels.
+ * Several of the attributes are dunamically adjustable:
+ * 
  * Fire mode adjustments:
  * 
- *
  *  Intensity  Warmth 
  *   * -        - *
  *   - -        - -
@@ -45,8 +50,7 @@
  * Includes code from fire.ino, color_designer.ino & rainbling.ino by Christopher De Vries, Copyright 2011
  * and distributed under the Artistic License 2.0
  *
- * Copyright 2014 Chris O'Halloran - cknight __ ghostwheel _ com
- * Copyright Chris O'Halloran
+ * Copyright 2014 Chris O'Halloran - cknight __ ghostwheel _ com unless otherwise noted
  * License: Attribution Non-commercial Share Alike (by-nc-sa) (CC BY-NC-SA 4.0)
  * https://creativecommons.org/licenses/by-nc-sa/4.0/
  * https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
@@ -59,9 +63,6 @@
 const int MAXLEDS = 400; // Maximum number of LEDs that this demo will address
 int ACTIVELEDS = 200;  // User can dymamically adjust this after program starts running
 
-byte red_values[MAXLEDS];
-byte green_values[MAXLEDS];
-byte blue_values[MAXLEDS];
 byte strand[MAXLEDS][3]; // 0=R, 1=G, 2=B
 
 // This structure is used to read and write values from EEPROM
