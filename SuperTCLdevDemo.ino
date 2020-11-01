@@ -4,45 +4,45 @@
  *
  * Notes:  Needs better comments and docs!
  *
- * Code now detects for type of momentary switch, to compensate for a manufacturing 
- * issue with the TCL Dev Shields, as well as whether a TCL Developer or Simple Board 
- * is installed.  If a TCL SImple Board is installed, it defaults to running 
+ * Code now detects for type of momentary switch, to compensate for a manufacturing
+ * issue with the TCL Dev Shields, as well as whether a TCL Developer or Simple Board
+ * is installed.  If a TCL SImple Board is installed, it defaults to running
  * rainbling() with a set of visually appealing presets.
  *
  * New in 1.2
- * Feature: When you use TCL_MOMENTARY2 to adjust ACTIVELEDS (length of the strand), 
+ * Feature: When you use TCL_MOMENTARY2 to adjust ACTIVELEDS (length of the strand),
  *          that value is stored in EEPROM so that it persists through power cycles.
  *          No more having to tweak the strand length every time you set up!
- * Fix:     All functions now utilize ACTIVELEDS, where some had been sloppy and 
+ * Fix:     All functions now utilize ACTIVELEDS, where some had been sloppy and
  *          ran out to MAXLEDS.
  * FIX:     RainBling now uses the same strand[MAXLEDS][3] data structure as all other
  *          functions, reducing the memory requirements for the sketch.
- * 
- * New in 1.1.4 
+ *
+ * New in 1.1.4
  * fix:  Forgot to remove developer flag used in testing 1.1.3
  *
- * New in 1.1.3 
+ * New in 1.1.3
  * Fix:  If Dev/Simple shield detect falsely identifies Simple, it can be reset by changing any of the switches or buttons.
  * Fix:  Resolved issue where strands larger than 25 didn't clear pixels after 25 when the length had not been manually adjusted.
  *
- * New in 1.1.x 
- * User can dymacially adjust the length of the active pixels in the strand by holding 
+ * New in 1.1.x
+ * User can dymacially adjust the length of the active pixels in the strand by holding
  * down Momentary 1 (Pin 4) and turning the lower right Analog Potentiometer (Pin 0)
- * 
+ *
  * cylon_eye() looks like a certain retro science fiction special effect.
- * 
+ *
  * rainBling() is a HSV rainbow, with bonus lightning effects.
- * 
+ *
  * FireStrand() will send a flickering fire sequence down the strand of TCL pixels.
  * Several of the attributes are dunamically adjustable:
- * 
+ *
  * Fire mode adjustments:
- * 
- *  Intensity  Warmth 
+ *
+ *  Intensity  Warmth
  *   * -        - *
  *   - -        - -
- * 
- *  Speed      Length 
+ *
+ *  Speed      Length
  *   - -        - -
  *   * -        - *
  *
@@ -113,7 +113,7 @@ void setup() {
   TCL.setupDeveloperShield();
 
   ACTIVELEDS = readSettingsFromEEPROM(ACTIVELEDS);
-  
+
   MOMENTARY1_Initial_State = digitalRead(TCL_MOMENTARY1);
   MOMENTARY2_Initial_State = digitalRead(TCL_MOMENTARY2);
   TCL_SWITCH1_Initial_State = digitalRead(TCL_SWITCH1);
@@ -132,7 +132,7 @@ void setup() {
 
 void loop() {
   CheckSwitches();
-  
+
   switch (SWITCHSTATE) {
     case 3:
       FireStrand();
@@ -158,12 +158,12 @@ void FireStrand() {
   float chromatography;
   int delaytime;
   int strandlength;
-  
+
   intensity=(float)map(analogRead(TCL_POT4), 0, 1023, 0, 100)/100;
   chromatography=(float)map(analogRead(TCL_POT3), 0, 1023, 0, 50)/100;
   strandlength=ACTIVELEDS;
   delaytime=(int)map(analogRead(TCL_POT1), 0, 1023, 150, 0);
-  
+
   TCL.sendEmptyFrame();
   for(i=0;i<strandlength;i++) {
     red=(int)(random(0,256) * intensity);
@@ -182,7 +182,7 @@ void FireStrand() {
 
 void sendPixelData( int red, int green, int blue) {
 
-  if (digitalRead(TCL_MOMENTARY1) != MOMENTARY1_Initial_State) { 
+  if (digitalRead(TCL_MOMENTARY1) != MOMENTARY1_Initial_State) {
     if ( 3 == SWITCHSTATE ) {
       TCL.sendColor(green, blue, red);  // The colors are a LIE!  On this line ONLY they are deliberately swapped!
     }
@@ -207,25 +207,27 @@ void CheckSwitches() {
       reset_strand();
     }
   }
-  
+
   // This loop lets the user adjust the strand length by holding down Momentary 1 (Pin 4)
   // and turning the lower right Analog Potentiometer (Pin 0)
-  while (digitalRead(TCL_MOMENTARY2) != MOMENTARY2_Initial_State) {
-    int led_posiiton;
-    ACTIVELEDS=(int)map(analogRead(TCL_POT2), 0, 1023, 1, MAXLEDS);
-    TCL.sendEmptyFrame();
-    for (led_posiiton = 1; led_posiiton < ACTIVELEDS; led_posiiton++) {
-      TCL.sendColor(255,0,0);
-    }
-    TCL.sendColor(0,0,255);
-    led_posiiton++;
-    while (led_posiiton < MAXLEDS) {
-      TCL.sendColor(0,0,0);
+  if (digitalRead(TCL_MOMENTARY2) != MOMENTARY2_Initial_State) {
+    while (digitalRead(TCL_MOMENTARY2) != MOMENTARY2_Initial_State) {
+      int led_posiiton;
+      ACTIVELEDS=(int)map(analogRead(TCL_POT2), 0, 1023, 1, MAXLEDS);
+      TCL.sendEmptyFrame();
+      for (led_posiiton = 1; led_posiiton < ACTIVELEDS; led_posiiton++) {
+        TCL.sendColor(255,0,0);
+      }
+      TCL.sendColor(0,0,255);
       led_posiiton++;
+      while (led_posiiton < MAXLEDS) {
+        TCL.sendColor(0,0,0);
+        led_posiiton++;
+      }
+      TCL.sendEmptyFrame();
     }
-    TCL.sendEmptyFrame();
+    writeSettingsToEEPROM(ACTIVELEDS);
   }
-  writeSettingsToEEPROM(ACTIVELEDS);
 
 
   if ( 1 == DevSheildInstalled ) {
@@ -245,14 +247,14 @@ void CheckSwitches() {
   else {
     SWITCHSTATE = 0;
   }
-  
+
 
 }
 
 
 void reset_strand() {
   int i;
-  
+
   for(i=0;i<MAXLEDS;i++) {
     strand[i][0]=0;  // R
     strand[i][1]=0;  // G
@@ -264,7 +266,7 @@ void reset_strand() {
 
 void update_strand() {
   int i;  // A local instance of 'i' so we don't interfere with other loops
-  
+
   TCL.sendEmptyFrame();
   for(i=0;i<ACTIVELEDS;i++) {
     sendPixelData(strand[i][0],strand[i][1],strand[i][2]);
@@ -296,7 +298,7 @@ void cylon_eye() {
           strand[pos][1] = strand[pos][1] / 2;
           strand[pos][2] = strand[pos][2] / 2;
         }
-      } 
+      }
 
       // Empty out all trailing LEDs.  This prevents 'orphans' when dynamically shortening the tail length.
       for(pos=i-j; pos>=0;pos--){
@@ -349,7 +351,7 @@ void cylon_eye() {
         break;
       }
     }
-    
+
   }
   reset_strand();
 }
@@ -366,7 +368,7 @@ void check_color_pots() {
     ratioRED = ( (float)RED / colorSUM );
     ratioBLUE = ( (float)BLUE / colorSUM );
     ratioGREEN = ( (float)GREEN / colorSUM );
-    
+
     ratioHIGHEST = ratioRED;
     if ( ratioHIGHEST < ratioBLUE ) {
       ratioHIGHEST = ratioBLUE;
@@ -392,7 +394,7 @@ void color_picker() {
    * Values are 10 bit and must be left shifted by 2 in order to fit in 8
    * bits */
   strand[0][0]=analogRead(TCL_POT1)>>2;
-  
+
   /* Read the current green value from potentiometer 2 */
   strand[0][1]=analogRead(TCL_POT2)>>2;
 
@@ -415,7 +417,7 @@ void rain_HSVtoRGB(float h, float s, float v, byte *r, byte *g, byte *b) {
     /* grey */
     r_f = g_f = b_f = v;
   }
-  
+
   else {
     h /= 60.0;              /* Divide into 6 regions (0-5) */
     i = (int)floor( h );
@@ -457,7 +459,7 @@ void rain_HSVtoRGB(float h, float s, float v, byte *r, byte *g, byte *b) {
         break;
     }
   }
-  
+
   *r = rain_gamma_table[(byte)floor(r_f*255.99)];
   *g = rain_gamma_table[(byte)floor(g_f*255.99)];
   *b = rain_gamma_table[(byte)floor(b_f*255.99)];
@@ -470,7 +472,7 @@ void rainBling() {
   rain_hval = 0.0;
   blackout_strand();
   // END rainbling setup
-  
+
   while ( SWITCHSTATE == 0 ) {
     int i;
     float local_h;
@@ -482,7 +484,7 @@ void rainBling() {
     float sat;
     float v;
     float flash_prob;
-  
+
     if ( 1 == DevSheildInstalled ) {
       speed_pot = analogRead(TCL_POT1);
       brightness_pot = analogRead(TCL_POT2);
@@ -495,10 +497,10 @@ void rainBling() {
       saturation_pot = 1022;
       flash_pot = 832;
     }
-  
+
     v = rain_v_max/1023.0*brightness_pot;
     sat = rain_sat_max/1023.0*saturation_pot;
-  
+
     for(i=0;i<ACTIVELEDS;i++) {
       local_h = rain_hval+i*rain_totem_interval;
       while(local_h>=360.0) {
@@ -514,7 +516,7 @@ void rainBling() {
       }
       CheckSwitches();
     }
-  
+
     update_strand();
     delay(25);
     hinterval = rain_hinterval_max/1023.0*speed_pot;
@@ -527,8 +529,8 @@ void rainBling() {
       }
     }
   }
-  
-  
+
+
 }
 
 
