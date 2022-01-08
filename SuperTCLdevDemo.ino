@@ -9,6 +9,13 @@
  * is installed.  If a TCL SImple Board is installed, it defaults to running
  * rainbling() with a set of visually appealing presets.
  *
+ * New in 1.2.2
+ * Fix:     Fixed a bug in the lengh-setting code that caused excessive and unnecessary writes to 
+ *          the EEPROM.
+ *
+ * New in 1.2.1
+ * Fix:     fixed typos, and removed unused globals.
+ *
  * New in 1.2
  * Feature: When you use TCL_MOMENTARY2 to adjust ACTIVELEDS (length of the strand),
  *          that value is stored in EEPROM so that it persists through power cycles.
