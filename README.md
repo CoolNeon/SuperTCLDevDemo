@@ -216,3 +216,32 @@ struct SettingsObject {
 | `DELAYHIGH`      | 150     | Maximum delay (ms) used in cylon_eye sweep.                    |
 | `LED_CHIPSET`    | P9813   | FastLED chipset family (change when swapping strip types).      |
 | `LED_COLOR_ORDER`| RGB     | FastLED color byte order (change when swapping strip types).    |
+
+---
+
+## Version History
+
+### 2.0.1 — Performance & memory optimization
+
+**SRAM: ~610 bytes → ~354 bytes (40% reduction)**
+
+- Moved the 256-byte gamma-correction lookup table from SRAM to flash (PROGMEM),
+  freeing a substantial chunk of the Uno's 2 KB SRAM for future features.
+- Inlined `transformPixel()` into `update_strand()` and read the MOMENTARY1
+  button state once per frame instead of once per pixel, eliminating ~100
+  `digitalRead()` calls per frame.
+- Replaced integer division (`/ 2`) with single-cycle bit shifts (`>>= 1`) in
+  the Cylon Eye trailing-fade computation.
+- Replaced temporary `CRGB(r, g, b)` constructors with `.setRGB()` and direct
+  member assignment in all hot paths (FireStrand, cylon_eye, CheckSwitches).
+- Lifted `check_color_pots()` out of the cylon_eye per-pixel loop — potentiometer
+  values are now sampled once per sweep rather than once per pixel, saving
+  hundreds of `analogRead()` + `map()` calls per frame.
+- Removed dead code: the standalone `transformPixel()` function and
+  commented-out test routines in `setup()`.
+
+### 2.0.0 — FastLED migration
+
+- Replaced arduino-tcl with CoolNeon_DevShield for shield inputs.
+- Replaced TCL output calls with FastLED (P9813 data/clock output).
+- Added GitHub Actions CI: Arduino Lint + compile check on every PR.

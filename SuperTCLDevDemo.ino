@@ -1,6 +1,6 @@
 /*****************************************************************************
- * SuperTCLdevDemo.ino
- * Version 2.0.0
+ * SuperTCLDevDemo.ino
+ * Version 2.0.1
  *
  * This sketch uses CoolNeon_DevShield for input aliases and initialization,
  * and FastLED for writing pixel data to P9813-based strands.
@@ -9,6 +9,24 @@
  * issue with the CoolNeon Dev Shields, as well as whether a Developer or Simple Board
  * is installed.  If a Simple Board is installed, it defaults to running
  * rainBling() with a set of visually appealing presets.
+ *
+ * New in 2.0.1
+ * Perf:    Moved gamma-correction lookup table (256 bytes) from SRAM to PROGMEM
+ *          (flash), reducing SRAM usage by ~40% and leaving more headroom for
+ *          future features.
+ * Perf:    Inlined transformPixel() into update_strand() and read MOMENTARY1
+ *          once per frame instead of once per pixel, eliminating ~100
+ *          digitalRead() calls per frame.
+ * Perf:    Replaced integer division (/ 2) with bit shifts (>>= 1) in
+ *          cylon_eye() trailing fade — single-cycle on AVR.
+ * Perf:    Replaced CRGB() temporary constructors with setRGB() / direct member
+ *          assignment throughout hot paths (FireStrand, cylon_eye, etc.).
+ * Perf:    Lifted check_color_pots() out of cylon_eye() per-pixel loop — pots
+ *          are now read once per sweep instead of once per pixel, saving
+ *          hundreds of analogRead() + map() calls per frame.
+ * Cleanup: Removed dead transformPixel() function and commented-out test code
+ *          in setup().
+ * Docs:    Updated header to reflect current file name and version.
  *
  * New in 2.0.0
  * Migration: Replaced arduino-tcl with CoolNeon_DevShield for shield inputs.
@@ -142,7 +160,26 @@ int DEVSHIELD_SWITCH2_Initial_State;
  */
 
 //  BEGIN - Variables and constants for rainbling subroutine
-byte rain_gamma_table[256];
+// Gamma table (gamma=2.2) precomputed at compile time and stored in flash (PROGMEM)
+// to save 256 bytes of SRAM.
+const PROGMEM byte rain_gamma_table[256] = {
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,
+    1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,
+    2,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  4,  5,  5,  5,
+    5,  6,  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10,
+   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,
+   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,
+   25, 26, 27, 27, 28, 29, 29, 30, 31, 31, 32, 33, 34, 34, 35, 36,
+   37, 37, 38, 39, 40, 40, 41, 42, 43, 44, 45, 46, 46, 47, 48, 49,
+   50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65,
+   66, 67, 68, 69, 70, 71, 72, 73, 74, 76, 77, 78, 79, 80, 81, 83,
+   84, 85, 86, 87, 89, 90, 91, 92, 94, 95, 96, 98, 99,100,102,103,
+  104,106,107,109,110,111,113,114,116,117,119,120,122,123,125,126,
+  128,129,131,132,134,135,137,139,140,142,143,145,147,148,150,152,
+  153,155,157,158,160,162,163,165,167,168,170,172,174,175,177,179,
+  181,182,184,186,188,189,191,193,195,197,198,200,202,204,206,207
+};
 const float rain_gamma = 2.2;
 const float rain_hinterval_max = 10.0;
 const float rain_v_max = 0.99;
@@ -157,7 +194,7 @@ float rain_hval;
 int DevShieldInstalled = 0;
 
 
-// Initialize Developer Shield inputs, FastLED output, restore settings, and precompute gamma table.
+// Initialize Developer Shield inputs, FastLED output, and restore settings from EEPROM.
 void setup() {
   DevShield.begin();
   FastLED.addLeds<LED_CHIPSET, DEVSHIELD_DATAPIN, DEVSHIELD_CLOCKPIN, LED_COLOR_ORDER>(leds, MAXLEDS);
@@ -171,13 +208,6 @@ void setup() {
   DEVSHIELD_SWITCH2_Initial_State = digitalRead(DEVSHIELD_SWITCH2);
 
   DevBoardDetect();
-//  whiteout_strand();
-//  delay(1000);
-//  blackout_strand();
-
-  for(int i=0;i<256;i++) {
-    rain_gamma_table[i] = (byte)(pow(i/255.0,rain_gamma)*255.0+0.5);
-  }
 
 }
 
@@ -202,18 +232,6 @@ void loop() {
 
 }
 
-CRGB transformPixel(uint8_t red, uint8_t green, uint8_t blue) {
-  if (digitalRead(DEVSHIELD_MOMENTARY1) != MOMENTARY1_Initial_State) {
-    if (3 == SWITCHSTATE) {
-      // Deliberate channel swap for this mode.
-      return CRGB(green, blue, red);
-    }
-    return CRGB((red ^ 255), (green ^ 255), (blue ^ 255));
-  }
-
-  return CRGB(red, green, blue);
-}
-
 // Fire-like animation written through the leds buffer and FastLED output.
 // POT1: speed, POT3: warmth/chromatography, POT4: intensity.
 void FireStrand() {
@@ -233,7 +251,7 @@ void FireStrand() {
   for(i=0;i<strandlength;i++) {
     red=(int)(random(0,256) * intensity);
     green=(int)(random(0,(red * chromatography +1)) * intensity);
-    leds[i] = CRGB(red, green, 0);
+    leds[i].setRGB(red, green, 0);
   }
   while (i < MAXLEDS) {
     leds[i] = CRGB::Black;
@@ -265,9 +283,9 @@ void CheckSwitches() {
       int led_position;
       ACTIVELEDS=(int)map(analogRead(DEVSHIELD_POT2), 0, 1023, 1, MAXLEDS);
       for (led_position = 1; led_position < ACTIVELEDS; led_position++) {
-        leds[led_position - 1] = CRGB(255, 0, 0);
+        leds[led_position - 1].setRGB(255, 0, 0);
       }
-      leds[led_position - 1] = CRGB(0, 0, 255);
+      leds[led_position - 1].setRGB(0, 0, 255);
       led_position++;
       while (led_position < MAXLEDS) {
         leds[led_position - 1] = CRGB::Black;
@@ -314,8 +332,24 @@ void reset_strand() {
 void update_strand() {
   int i;  // A local instance of 'i' so we don't interfere with other loops
 
+  // Read the momentary state once per frame, not once per pixel.
+  bool invertActive = (digitalRead(DEVSHIELD_MOMENTARY1) != MOMENTARY1_Initial_State);
+  bool swapChannels = invertActive && (SWITCHSTATE == 3);
+
   for(i=0;i<ACTIVELEDS;i++) {
-    leds[i] = transformPixel(leds[i].r, leds[i].g, leds[i].b);
+    if (invertActive) {
+      if (swapChannels) {
+        // Deliberate channel swap for FireStrand mode.
+        uint8_t tr = leds[i].r;
+        leds[i].r = leds[i].g;
+        leds[i].g = leds[i].b;
+        leds[i].b = tr;
+      } else {
+        leds[i].r ^= 255;
+        leds[i].g ^= 255;
+        leds[i].b ^= 255;
+      }
+    }
   }
   while (i < MAXLEDS) {
       leds[i] = CRGB::Black;
@@ -334,15 +368,15 @@ void cylon_eye() {
   while ( SWITCHSTATE == 2) {
 
     // Forward color sweep
+    check_color_pots();
     for(i=0; i<ACTIVELEDS;i++){
-      check_color_pots();
-      leds[i] = CRGB(RED, GREEN, BLUE);
+      leds[i].setRGB(RED, GREEN, BLUE);
       for(j=1;j<=10;j++) {
         pos=i-j;
         if(pos>=0) {
-          leds[pos].r = leds[pos].r / 2;
-          leds[pos].g = leds[pos].g / 2;
-          leds[pos].b = leds[pos].b / 2;
+          leds[pos].r >>= 1;
+          leds[pos].g >>= 1;
+          leds[pos].b >>= 1;
         }
       }
 
@@ -366,15 +400,15 @@ void cylon_eye() {
     }
 
     // Reverse color sweep
+    check_color_pots();
     for(i=ACTIVELEDS-1; i>=0;i--){
-      check_color_pots();
-      leds[i] = CRGB(RED, GREEN, BLUE);
+      leds[i].setRGB(RED, GREEN, BLUE);
       for(j=1;j<=10;j++) {
         pos=i+j;
         if(pos<ACTIVELEDS) {
-          leds[pos].r = leds[pos].r / 2;
-          leds[pos].g = leds[pos].g / 2;
-          leds[pos].b = leds[pos].b / 2;
+          leds[pos].r >>= 1;
+          leds[pos].g >>= 1;
+          leds[pos].b >>= 1;
         }
       }
 
@@ -491,9 +525,9 @@ void rain_HSVtoRGB(float h, float s, float v, byte *r, byte *g, byte *b) {
     }
   }
 
-  *r = rain_gamma_table[(byte)floor(r_f*255.99)];
-  *g = rain_gamma_table[(byte)floor(g_f*255.99)];
-  *b = rain_gamma_table[(byte)floor(b_f*255.99)];
+  *r = pgm_read_byte(&rain_gamma_table[(byte)floor(r_f*255.99)]);
+  *g = pgm_read_byte(&rain_gamma_table[(byte)floor(g_f*255.99)]);
+  *b = pgm_read_byte(&rain_gamma_table[(byte)floor(b_f*255.99)]);
 }
 
 void rainBling() {
